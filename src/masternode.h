@@ -1,4 +1,4 @@
-// Copyright (c) 2014-2017 The AceD Core developers
+// Copyright (c) 2014-2017 The Polis Core developers
 // Distributed under the MIT/X11 software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -13,7 +13,7 @@ class CMasternode;
 class CMasternodeBroadcast;
 class CConnman;
 
-static const int MASTERNODE_CHECK_SECONDS               =   5;
+static const int MASTERNODE_CHECK_SECONDS               =   20;
 static const int MASTERNODE_MIN_MNB_SECONDS             =   5 * 60;
 static const int MASTERNODE_MIN_MNP_SECONDS             =  10 * 60;
 static const int MASTERNODE_SENTINEL_PING_MAX_SECONDS   =  60 * 60;
@@ -246,7 +246,6 @@ public:
     static CollateralStatus CheckCollateral(const COutPoint& outpoint, const CPubKey& pubkey);
     static CollateralStatus CheckCollateral(const COutPoint& outpoint, const CPubKey& pubkey, int& nHeightRet);
     void Check(bool fForce = false);
-void SetBlk(int blk);
 
     bool IsBroadcastedWithin(int nSeconds) { return GetAdjustedTime() - sigTime < nSeconds; }
 
@@ -307,9 +306,6 @@ void SetBlk(int blk);
 
     int GetLastPaidTime() const { return nTimeLastPaid; }
     int GetLastPaidBlock() const { return nBlockLastPaid; }
-int setLastPaidBlock(int newblock){
-nTimeLastPaid = newblock;
-}
     void UpdateLastPaid(const CBlockIndex *pindex, int nMaxBlocksToScanBack);
 
     // KEEP TRACK OF EACH GOVERNANCE ITEM INCASE THIS NODE GOES OFFLINE, SO WE CAN RECALC THEIR STATUS
