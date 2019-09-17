@@ -49,7 +49,6 @@ unsigned int nTxConfirmTarget = DEFAULT_TX_CONFIRM_TARGET;
 bool bSpendZeroConfChange = DEFAULT_SPEND_ZEROCONF_CHANGE;
 bool fSendFreeTransactions = DEFAULT_SEND_FREE_TRANSACTIONS;
 bool bBIP69Enabled = true;
-//extern bool fWalletUnlockStakingOnly;
 
 const char * DEFAULT_WALLET_DAT = "wallet.dat";
 
@@ -214,12 +213,14 @@ bool CWallet::CreateCoinStakeKernel(CScript &kernelScript, const CScript &stakeS
     unsigned int nTryTime = 0;
     uint256 hashProofOfStake;
 
-    if (blockFrom.GetBlockTime() + Params().GetConsensus().nStakeMinAge + nHashDrift > nTimeTx) // Min age requirement
+    auto nStakeMinAge = blockFrom.GetBlockTime() > Params().GetConsensus().nStakeMinAgeSwitchTime ? Params().GetConsensus().nStakeMinAge_2 : Params().GetConsensus().nStakeMinAge;
+
+    if (blockFrom.GetBlockTime() + nStakeMinAge + nHashDrift > nTimeTx) // Min age requirement
         return false;
     for(unsigned int i = 0; i < nHashDrift; ++i)
     {
-        nTryTime = nTimeTx - i;
-        if (CheckStakeKernelHash(nBits, blockFrom, nTxPrevOffset, txPrev, prevout, nTryTime, hashProofOfStake, fPrintProofOfStake))
+        nTryTime = nTimeTx + nHashDrift - i;
+        if (CheckStakeKernelHash(nBits, blockFrom, nTxPrevOffset, txPrev, prevout, nTryTime, hashProofOfStake))
         {
             //Double check that this will pass time requirements
             if (nTryTime <= chainActive.Tip()->GetMedianTimePast()) {
@@ -428,8 +429,6 @@ bool CWallet::AddCScript(const CScript& redeemScript)
         return true;
     return CWalletDB(strWalletFile).WriteCScript(Hash160(redeemScript), redeemScript);
 }
-
-bool fWalletUnlockStakingOnly = false;
 
 bool CWallet::LoadCScript(const CScript& redeemScript)
 {
@@ -2439,7 +2438,8 @@ CAmount CWallet::GetStake() const
         for (std::map<uint256, CWalletTx>::const_iterator it = mapWallet.begin(); it != mapWallet.end(); ++it)
         {
             const CWalletTx* pcoin = &(*it).second;
-            if (pcoin->IsTrusted() && GetTime() - pcoin->GetTxTime() > Params().GetConsensus().nStakeMinAge && pcoin->GetBlocksToMaturity() < (pcoin->tx->IsCoinStake() ? COINBASE_MATURITY : 10))
+            auto nStakeMinAge = pcoin->GetTxTime() > Params().GetConsensus().nStakeMinAgeSwitchTime ? Params().GetConsensus().nStakeMinAge_2 : Params().GetConsensus().nStakeMinAge;
+            if (pcoin->IsTrusted() && GetTime() - pcoin->GetTxTime() > nStakeMinAge && pcoin->GetBlocksToMaturity() < (pcoin->tx->IsCoinStake() ? COINBASE_MATURITY : 10))
                 nTotal += pcoin->GetAvailableCredit();
         }
     }
@@ -2706,7 +2706,7 @@ void CWallet::AvailableCoins(std::vector<COutput>& vCoins, bool fOnlyConfirmed, 
                 } else if(nCoinType == ONLY_NONDENOMINATED) {
                     if (CPrivateSend::IsCollateralAmount(pcoin->tx->vout[i].nValue)) continue; // do not use collateral amounts
                     found = !CPrivateSend::IsDenominatedAmount(pcoin->tx->vout[i].nValue);
-                } else if(nCoinType == ONLY_1000) {
+                } else if(nCoinType == ONLY_10000) {
                     found = pcoin->tx->vout[i].nValue == 10000*COIN;
                 } else if(nCoinType == ONLY_PRIVATESEND_COLLATERAL) {
                     found = CPrivateSend::IsCollateralAmount(pcoin->tx->vout[i].nValue);
@@ -2717,7 +2717,7 @@ void CWallet::AvailableCoins(std::vector<COutput>& vCoins, bool fOnlyConfirmed, 
 
                 isminetype mine = IsMine(pcoin->tx->vout[i]);
                 if (!(IsSpent(wtxid, i)) && mine != ISMINE_NO &&
-                    (!IsLockedCoin((*it).first, i) || nCoinType == ONLY_1000) &&
+                    (!IsLockedCoin((*it).first, i) || nCoinType == ONLY_10000) &&
                     (pcoin->tx->vout[i].nValue > 0 || fIncludeZeroValue) &&
                     (!coinControl || !coinControl->HasSelected() || coinControl->fAllowOtherInputs || coinControl->IsSelected(COutPoint((*it).first, i))))
                         vCoins.push_back(COutput(pcoin, i, nDepth,
@@ -2935,7 +2935,9 @@ bool CWallet::MintableCoins()
     AvailableCoins(vCoins, true);
     for (const COutput& out : vCoins)
     {
-        if (GetTime() - out.tx->GetTxTime() > Params().GetConsensus().nStakeMinAge)
+        auto nStakeMinAge = out.tx->GetTxTime() > Params().GetConsensus().nStakeMinAgeSwitchTime ? Params().GetConsensus().nStakeMinAge_2 : Params().GetConsensus().nStakeMinAge;
+
+        if (GetTime() - out.tx->GetTxTime() > nStakeMinAge)
         {
             return true;
         }
@@ -2960,7 +2962,8 @@ bool CWallet::SelectStakeCoins(StakeCoinsSet &setCoins, CAmount nTargetAmount, c
         //            continue;
         //        LogPrintf("amount is good\n");
         //check for min age
-        if (GetTime() - out.tx->GetTxTime() < Params().GetConsensus().nStakeMinAge)
+        auto nStakeMinAge = out.tx->GetTxTime() > Params().GetConsensus().nStakeMinAgeSwitchTime ? Params().GetConsensus().nStakeMinAge_2 : Params().GetConsensus().nStakeMinAge;
+        if (GetTime() - out.tx->GetTxTime() < nStakeMinAge)
             continue;
         //  LogPrintf("min age is good\n");
         //check that it is matured
@@ -3175,7 +3178,7 @@ bool CWallet::SelectCoinsByDenominations(int nDenom, CAmount nValueMin, CAmount 
     for (const auto& out : vCoins)
     {
         // masternode-like input should not be selected by AvailableCoins now anyway
-        //if(out.tx->vout[out.i].nValue == 1000*COIN) continue;
+        //if(out.tx->vout[out.i].nValue == 10000*COIN) continue;
         if(nValueRet + out.tx->tx->vout[out.i].nValue <= nValueMax){
 
             CTxIn txin = CTxIn(out.tx->GetHash(), out.i);
@@ -3370,7 +3373,7 @@ bool CWallet::GetMasternodeOutpointAndKeys(COutPoint& outpointRet, CPubKey& pubK
 
     // Find possible candidates
     std::vector<COutput> vPossibleCoins;
-    AvailableCoins(vPossibleCoins, true, NULL, false, ONLY_1000);
+    AvailableCoins(vPossibleCoins, true, NULL, false, ONLY_10000);
     if(vPossibleCoins.empty()) {
         LogPrintf("CWallet::GetMasternodeOutpointAndKeys -- Could not locate any valid masternode vin\n");
         return false;
